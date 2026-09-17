@@ -1,0 +1,29 @@
+# Local smoke-test output may contain AWS account and instance-role identifiers.
+/result-*.json
+/smoke-workspace/
+
+# Python-generated files.
+__pycache__/
+*.py[cod]
+.venv/
+
+# Local credentials and machine-specific configuration.
+.env
+.env.*
+!.env.example
+.aws/
+.codex/
+.ssh/
+.git-credentials
+.netrc
+*.pem
+*.key
+*.p12
+*.pfx
+*.log
+
+# Editor and operating-system files.
+.idea/
+.vscode/
+.DS_Store
+*.swp

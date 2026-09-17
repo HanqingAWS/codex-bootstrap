@@ -1,0 +1,17 @@
+model = "us.openai.gpt-6-astra"
+model_provider = "amazon-bedrock-runtime"
+model_reasoning_effort = "high"
+web_search = "disabled"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+model_catalog_json = "/absolute/path/to/.codex/model-catalogs/bedrock-models.json"
+
+[model_providers.amazon-bedrock-runtime]
+base_url = "https://bedrock-runtime.us-west-2.amazonaws.com/openai/v1"
+wire_api = "responses"
+
+[model_providers.amazon-bedrock-runtime.aws]
+region = "us-west-2"
+
+[model_providers.amazon-bedrock.aws]
+region = "us-west-2"
