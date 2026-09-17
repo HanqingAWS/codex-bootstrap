@@ -20,25 +20,27 @@
 
 | 文件 | 用途 |
 | --- | --- |
-| `bootstrap.py` | 生成用户配置和模型目录，拒绝覆盖已有文件 |
-| `smoke.py` | 对一个指定模型执行有超时限制的只读验证 |
+| `bootstrap.py` | 安装独立 Bedrock 配置，备份并更新 Bash 启动设置 |
+| `smoke.py` | 自动选用独立配置，对指定模型执行有超时限制的只读验证 |
 | `bedrock-models.json` | 四个已验证模型的完整元数据 |
 | `config.example.toml` | 手动配置参考，使用前替换绝对路径占位符 |
 | `README.md` | 安装、验证和排障说明 |
 | `AGENTS.md` | 贡献者指南 |
+| `test_bootstrap.py`、`test_smoke.py` | 标准库 unittest 离线回归测试 |
 
 `result-*.json`、`smoke-workspace/` 和 Python 缓存是本地产物，不纳入版本控制。
-测试结果包含调用者 ARN，可能暴露 AWS 账号、角色和实例标识；分享前必须脱敏。
+测试结果不再主动输出调用者 ARN，但错误详情仍可能包含身份信息；分享前必须脱敏。
 公有仓库不保存真实用户名、主机地址、账号标识、部署日志或凭证。
 
 ### 用户目录中的配置
 
 | 文件 | 用途 | 是否必需 |
 | --- | --- | --- |
-| `~/.codex/config.toml` | 默认模型、Runtime 端点、region、权限和网页搜索设置 | 是 |
-| `~/.codex/model-catalogs/bedrock-models.json` | 四模型目录及完整模型元数据 | 要复现当前四模型菜单时使用 |
-| `~/.bashrc` | 确保 `~/.local/bin` 在 PATH 中 | 仅 PATH 缺失且未添加过脚本标记时修改 |
-| `~/.codex/.env` | API 密钥模式的环境变量 | 实例角色模式不需要 |
+| `~/.codex-bedrock/.codex/config.toml` | 独立的 Bedrock 配置，默认区域 `us-west-2` | 是 |
+| `~/.codex-bedrock/.codex/model-catalogs/bedrock-models.json` | 四模型目录及完整模型元数据 | 是 |
+| `~/.bashrc` | 设置 `CODEX_HOME`，确保 `~/.local/bin` 在 PATH 中 | 自动追加管理块；已有文件先备份 |
+| `~/.codex/` | 原有 Codex 配置、认证和历史 | 保留，不迁移、不覆盖 |
+| `~/.codex-bedrock/.codex/.env` | API 密钥模式的环境变量 | 不创建；实例角色模式不需要 |
 | `~/.aws/credentials` | 静态 AWS 凭证文件 | 实例角色模式不需要，也不建议为此创建 |
 
 不要直接复制其他机器的整个 `~/.codex/config.toml`。
@@ -89,11 +91,28 @@ codex --version
 python3 bootstrap.py
 ```
 
-脚本会根据当前用户 HOME 生成绝对路径。它发现已有 `config.toml` 或同名模型目录文件时会拒绝覆盖。
-有现存配置的机器应先备份并合并，不能直接重复运行此脚本覆盖用户设置。
+脚本根据当前用户 HOME，在 `~/.codex-bedrock/.codex` 安装独立配置。
+不受旧 `CODEX_HOME` 环境变量影响，也不改动原来的 `~/.codex`。
+区域、Runtime 端点和模型目录一起配置，无需手动指定区域或复制配置文件。
 
-如果 PATH 缺失，脚本会先备份 `.bashrc`，再添加 `~/.local/bin`；此时重新登录，
-或在当前 shell 执行 `export PATH="$HOME/.local/bin:$PATH"`。
+无论 PATH 是否已经包含 Codex，脚本都会在真实用户的 `~/.bashrc` 中确保存在：
+
+```bash
+export CODEX_HOME="$HOME/.codex-bedrock/.codex"
+```
+
+原有 `.bashrc` 会先备份为权限 `600` 的 `.bashrc.backup-codex-*`。
+重复执行会复用内容一致的配置，不重复追加 shell 设置；如果目标配置、模型目录或管理块被修改，
+脚本会拒绝覆盖，需先人工检查差异。此前按独立 HOME 方式生成的相同配置可以直接复用。
+
+Python 子进程不能改变父终端的环境变量。配置完成后，`smoke.py` 可立即运行，不需要手动 export；
+普通 `codex` 在读取 `~/.bashrc` 的新 Bash 终端中自动生效。要继续使用当前终端，只需加载一次：
+
+```bash
+source ~/.bashrc
+```
+
+如果自定义 Bash 登录配置没有加载 `.bashrc`，需要在自己的 shell 启动流程中加载它。
 
 ### 生成的 config.toml
 
@@ -108,7 +127,7 @@ model_reasoning_effort = "high"
 web_search = "disabled"
 approval_policy = "on-request"
 sandbox_mode = "workspace-write"
-model_catalog_json = "/absolute/path/to/.codex/model-catalogs/bedrock-models.json"
+model_catalog_json = "/absolute/path/to/.codex-bedrock/.codex/model-catalogs/bedrock-models.json"
 
 [model_providers.amazon-bedrock-runtime]
 base_url = "https://bedrock-runtime.us-west-2.amazonaws.com/openai/v1"
@@ -126,6 +145,7 @@ region = "us-west-2"
 - 实际选中的 provider 是 `amazon-bedrock-runtime`；补充 `amazon-bedrock.aws.region`
   是为了兼容仍会读取原 provider region 的客户端，不代表调用切回 Mantle。
 - Endpoint 中的 region 与这两处 region 保持一致。
+- EC2 所在区域可以不同；此配置明确请求 `us-west-2`，无需修改 AWS CLI 的全局默认区域。
 - 模型 ID 使用 `us.` 前缀。模型列表是目录，不会授予模型访问权限。
 - `web_search = "disabled"` 是此 Runtime 配置的默认值，不是对所有 provider 的通用要求。
 - 不需要 `codex login` 获取 OpenAI API key；本方案通过 AWS 实例角色访问 Bedrock。
@@ -135,9 +155,10 @@ region = "us-west-2"
 权限检查：
 
 ```bash
-chmod 700 "$HOME/.codex"
-chmod 600 "$HOME/.codex/config.toml"
-chmod 600 "$HOME/.codex/model-catalogs/bedrock-models.json"
+chmod 700 "$HOME/.codex-bedrock" "$HOME/.codex-bedrock/.codex"
+chmod 700 "$HOME/.codex-bedrock/.codex/model-catalogs"
+chmod 600 "$HOME/.codex-bedrock/.codex/config.toml"
+chmod 600 "$HOME/.codex-bedrock/.codex/model-catalogs/bedrock-models.json"
 ```
 
 ## 4. 实际验证四个模型
@@ -156,12 +177,14 @@ done
 {"ok": true, "response": "OK", "exit_code": 0}
 ```
 
-务必检查每个 `result-<model-id>.json` 的字段；当前脚本的进程退出码不能可靠表示模型调用失败。
+检查每个 `result-<model-id>.json` 的字段；验证失败或超时也会返回非零进程退出码。
 
-该脚本故意去掉进程中的静态凭证、API 密钥和 region 环境变量，
-并要求没有 `.aws/credentials` 与 `.codex/.env`，以验证实例角色和文件中的 region。
-若机器采用其他合法认证方式，不要删除它们来满足脚本断言，应另行修改测试方式。
+脚本显式设置子进程的 `CODEX_HOME` 为独立 Bedrock 目录，不会沿用旧终端指向的其他配置。
+它会去掉进程中的静态凭证、OpenAI API 密钥、OpenAI 端点和 region 环境变量，
+并要求没有 `~/.aws/credentials`、`~/.codex/.env` 与独立配置目录中的 `.env`。
+若机器采用其他合法认证方式，不要删除它们来满足脚本检查，应另行修改测试方式。
 测试暂时使用低推理强度和只读沙箱，不改变默认高推理配置。
+`aws_identity_checked` 只表示 AWS STS 身份检查成功，不证明模型权限；以实际模型调用结果为准。
 
 普通使用：
 
@@ -181,6 +204,10 @@ codex -m us.openai.gpt-6-astra
 
 ## 5. 常见问题
 
+- **请求发到 `api.openai.com`，报 `invalid_api_key`**：通常是普通 `codex` 仍读取旧配置。
+  运行 `python3 bootstrap.py` 后重新打开 Bash 终端，或执行 `source ~/.bashrc`；
+  启动时应显示 `provider: amazon-bedrock-runtime`，不需要更换 OpenAI API key。
+- **提示已有文件不同**：脚本不会覆盖用户修改。检查独立目录的配置与模型目录，不要直接删除旧配置重试。
 - **提示缺少 Bedrock region**：检查 TOML 节层级、原 provider 的 region、
   Runtime region 和端点是否一致。不要只改 URL。
 - **AccessDenied**：检查实例角色、SCP、权限边界和跨区域推理目标权限；
@@ -193,17 +220,20 @@ codex -m us.openai.gpt-6-astra
 
 ## 开发验证
 
-脚本仅依赖 Python 标准库，无构建步骤，也未配置独立单元测试框架或覆盖率门槛。
+脚本和测试仅依赖 Python 标准库，无构建步骤，无覆盖率门槛。
 在仓库根目录执行：
 
 ```bash
-python3 -m py_compile bootstrap.py smoke.py
+python3 -m py_compile bootstrap.py smoke.py test_bootstrap.py test_smoke.py
 python3 -m json.tool bedrock-models.json > /dev/null
+python3 -m unittest -v
 HOME="$(mktemp -d)" python3 bootstrap.py
 ```
 
 最后一条命令只在临时 HOME 中生成配置，不修改真实用户配置。
-使用同一个临时 HOME 再次执行应拒绝覆盖；配置文件和模型目录 JSON 应为 `600`，新建目录应为 `700`。
+使用同一个临时 HOME 再次执行应复用相同配置，改动目标文件后应拒绝覆盖；
+配置文件和模型目录 JSON 应为 `600`，新建目录应为 `700`。
+离线测试覆盖旧配置保留、重复执行、shell 备份与导出、符号链接拒绝，以及测试失败退出码。
 模型、配置或 CLI 版本变更后，应重新执行第 4 节的四模型实测。
 
 ## 验证记录和来源

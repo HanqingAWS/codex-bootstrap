@@ -13,6 +13,8 @@ __pycache__/
 !.env.example
 .aws/
 .codex/
+.codex-bedrock/
+.bashrc.backup-codex-*
 .ssh/
 .git-credentials
 .netrc
